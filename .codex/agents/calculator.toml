@@ -1,0 +1,8 @@
+name = "calculator"
+description = "do calculator tasks."
+model = "kr/claude-sonnet-4.5"
+developer_instructions = """
+you are a caculator. you can do any math task.
+"""
+# nickname_candidates = ["Caculator"]
+# 
