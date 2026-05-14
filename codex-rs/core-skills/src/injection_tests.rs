@@ -14,6 +14,7 @@ fn make_skill(name: &str, path: &str) -> SkillMetadata {
         interface: None,
         dependencies: None,
         policy: None,
+        routing: None,
         path_to_skills_md: test_path_buf(path).abs(),
         scope: codex_protocol::protocol::SkillScope::User,
         plugin_id: None,

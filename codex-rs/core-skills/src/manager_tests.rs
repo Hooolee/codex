@@ -62,6 +62,7 @@ fn test_skill(name: &str, path: PathBuf) -> SkillMetadata {
         interface: None,
         dependencies: None,
         policy: None,
+        routing: None,
         path_to_skills_md: path
             .abs()
             .canonicalize()

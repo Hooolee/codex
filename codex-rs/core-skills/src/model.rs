@@ -16,6 +16,7 @@ pub struct SkillMetadata {
     pub interface: Option<SkillInterface>,
     pub dependencies: Option<SkillDependencies>,
     pub policy: Option<SkillPolicy>,
+    pub routing: Option<SkillRouting>,
     /// Path to the SKILLS.md file that declares this skill.
     pub path_to_skills_md: AbsolutePathBuf,
     pub scope: SkillScope,
@@ -52,6 +53,11 @@ pub struct SkillPolicy {
     // TODO: Enforce product gating in Codex skill selection/injection instead of only parsing and
     // storing this metadata.
     pub products: Vec<Product>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillRouting {
+    pub task_tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

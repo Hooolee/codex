@@ -23,6 +23,7 @@ use crate::feedback_tags;
 use crate::hook_runtime::PendingInputHookDisposition;
 use crate::hook_runtime::emit_hook_completed_events;
 use crate::hook_runtime::inspect_pending_input;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use crate::hook_runtime::record_additional_contexts;
 use crate::hook_runtime::record_pending_input;
 use crate::hook_runtime::run_pending_session_start_hooks;
@@ -143,6 +144,29 @@ pub(crate) async fn run_turn(
     prewarmed_client_session: Option<ModelClientSession>,
     cancellation_token: CancellationToken,
 ) -> Option<String> {
+    // Diagnostics: log the input items arriving at run_turn.
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/codex-subagent-route.log")
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "[INPUT] n_items={}", input.len());
+        for (i, item) in input.iter().enumerate() {
+            match item {
+                UserInput::Skill { name, path } => {
+                    let _ = writeln!(f, "[INPUT]   [{i}] Skill name={name} path={path:?}");
+                }
+                UserInput::Text { text, .. } => {
+                    let preview: String = text.chars().take(60).collect();
+                    let _ = writeln!(f, "[INPUT]   [{i}] Text preview={preview}");
+                }
+                _ => {
+                    let _ = writeln!(f, "[INPUT]   [{i}] other");
+                }
+            }
+        }
+    }
     if input.is_empty() && !sess.has_pending_input().await {
         return None;
     }
@@ -227,6 +251,36 @@ pub(crate) async fn run_turn(
             &connector_slug_counts,
         )
     });
+    // Stash skill paths so the subagent routing system can find active skill
+    // tags even when the spawn_agent input text doesn't mention the skill by name.
+    {
+        let paths: Vec<AbsolutePathBuf> = mentioned_skills
+            .iter()
+            .map(|s| s.path_to_skills_md.clone())
+            .collect();
+        // Diagnostics: write route state to a well-known temp file so the user
+        // can inspect it without depending on trace subscriber capture.
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/codex-subagent-route.log")
+        {
+            use std::io::Write;
+            let _ = writeln!(
+                f,
+                "[TURN] mentioned_skills={:?} paths={:?}",
+                mentioned_skills.iter().map(|s| &s.name).collect::<Vec<_>>(),
+                paths
+            );
+        }
+        if !paths.is_empty() {
+            *turn_context
+                .turn_skills
+                .mentioned_skill_paths
+                .lock()
+                .await = paths;
+        }
+    }
     let config = turn_context.config.clone();
     if config
         .features

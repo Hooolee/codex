@@ -1,0 +1,8 @@
+interface:
+  display_name: "Test Routing"
+  short_description: "Test skill-based model routing by delegating research to a subagent"
+  default_prompt: "For ANY question that requires research, analysis, or investigation, you MUST use spawn_agent to delegate the task to a subagent, then summarize the results. Do NOT answer research questions yourself — always delegate via spawn_agent first."
+routing:
+  task_tags:
+    - research
+    - deep-reasoning

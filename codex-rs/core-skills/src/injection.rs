@@ -157,6 +157,22 @@ pub fn collect_explicit_skill_mentions(
     for input in inputs {
         if let UserInput::Text { text, .. } = input {
             let mentioned_names = extract_tool_mentions(text);
+            if text.contains("test-routing") || text.contains("@test") {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/tmp/codex-subagent-route.log")
+                {
+                    use std::io::Write;
+                    let _ = writeln!(
+                        f,
+                        "[MENTION_DEBUG] text_contains_test_routing names={:?} plain_names={:?} paths={:?}",
+                        mentioned_names.names.iter().collect::<Vec<_>>(),
+                        mentioned_names.plain_names().collect::<Vec<_>>(),
+                        mentioned_names.paths().collect::<Vec<_>>(),
+                    );
+                }
+            }
             select_skills_from_mentions(
                 &selection_context,
                 &blocked_plain_names,

@@ -5,6 +5,7 @@ use crate::model::SkillInterface;
 use crate::model::SkillLoadOutcome;
 use crate::model::SkillMetadata;
 use crate::model::SkillPolicy;
+use crate::model::SkillRouting;
 use crate::model::SkillToolDependency;
 use crate::system::system_cache_root_dir;
 use codex_app_server_protocol::ConfigLayerSource;
@@ -59,6 +60,8 @@ struct SkillMetadataFile {
     dependencies: Option<Dependencies>,
     #[serde(default)]
     policy: Option<Policy>,
+    #[serde(default)]
+    routing: Option<Routing>,
 }
 
 #[derive(Default)]
@@ -66,6 +69,7 @@ struct LoadedSkillMetadata {
     interface: Option<SkillInterface>,
     dependencies: Option<SkillDependencies>,
     policy: Option<SkillPolicy>,
+    routing: Option<SkillRouting>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -90,6 +94,12 @@ struct Policy {
     allow_implicit_invocation: Option<bool>,
     #[serde(default)]
     products: Vec<Product>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct Routing {
+    #[serde(default)]
+    task_tags: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -118,9 +128,19 @@ const MAX_DEPENDENCY_VALUE_LEN: usize = MAX_DESCRIPTION_LEN;
 const MAX_DEPENDENCY_DESCRIPTION_LEN: usize = MAX_DESCRIPTION_LEN;
 const MAX_DEPENDENCY_COMMAND_LEN: usize = MAX_DESCRIPTION_LEN;
 const MAX_DEPENDENCY_URL_LEN: usize = MAX_DESCRIPTION_LEN;
+const MAX_TASK_TAGS: usize = 8;
+const MAX_TASK_TAG_LEN: usize = 32;
 // Traversal depth from the skills root.
 const MAX_SCAN_DEPTH: usize = 6;
 const MAX_SKILLS_DIRS_PER_ROOT: usize = 2000;
+const ALLOWED_TASK_TAGS: [&str; 6] = [
+    "research",
+    "coding",
+    "review",
+    "classification",
+    "fast-cheap",
+    "deep-reasoning",
+];
 
 #[derive(Debug)]
 enum SkillParseError {
@@ -634,6 +654,7 @@ async fn parse_skill_file(
         interface,
         dependencies,
         policy,
+        routing,
     } = load_skill_metadata(fs, path).await;
 
     validate_len(&name, MAX_NAME_LEN, "name")?;
@@ -655,6 +676,7 @@ async fn parse_skill_file(
         interface,
         dependencies,
         policy,
+        routing,
         path_to_skills_md: resolved_path,
         scope,
         plugin_id: plugin_id.map(str::to_string),
@@ -742,11 +764,13 @@ async fn load_skill_metadata(
         interface,
         dependencies,
         policy,
+        routing,
     } = parsed;
     LoadedSkillMetadata {
         interface: resolve_interface(interface, &skill_dir),
         dependencies: resolve_dependencies(dependencies),
         policy: resolve_policy(policy),
+        routing: resolve_routing(routing),
     }
 }
 
@@ -803,6 +827,42 @@ fn resolve_policy(policy: Option<Policy>) -> Option<SkillPolicy> {
         allow_implicit_invocation: policy.allow_implicit_invocation,
         products: policy.products,
     })
+}
+
+fn resolve_routing(routing: Option<Routing>) -> Option<SkillRouting> {
+    let routing = routing?;
+    if routing.task_tags.is_empty() {
+        return None;
+    }
+    if routing.task_tags.len() > MAX_TASK_TAGS {
+        tracing::warn!("ignoring routing.task_tags: too many tags (max {MAX_TASK_TAGS})");
+        return None;
+    }
+
+    let mut task_tags = Vec::with_capacity(routing.task_tags.len());
+    let mut seen = HashSet::new();
+    for task_tag in routing.task_tags {
+        let task_tag = sanitize_single_line(&task_tag);
+        if task_tag.is_empty() {
+            tracing::warn!("ignoring routing.task_tags: tag cannot be blank");
+            return None;
+        }
+        if task_tag.chars().count() > MAX_TASK_TAG_LEN {
+            tracing::warn!(
+                "ignoring routing.task_tags: tag `{task_tag}` exceeds max length {MAX_TASK_TAG_LEN}"
+            );
+            return None;
+        }
+        if !ALLOWED_TASK_TAGS.contains(&task_tag.as_str()) {
+            tracing::warn!("ignoring routing.task_tags: unsupported tag `{task_tag}`");
+            return None;
+        }
+        if seen.insert(task_tag.clone()) {
+            task_tags.push(task_tag);
+        }
+    }
+
+    (!task_tags.is_empty()).then_some(SkillRouting { task_tags })
 }
 
 fn resolve_dependency_tool(tool: DependencyTool) -> Option<SkillToolDependency> {

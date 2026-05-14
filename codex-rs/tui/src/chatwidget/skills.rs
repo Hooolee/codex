@@ -17,6 +17,7 @@ use codex_app_server_protocol::SkillsListResponse;
 use codex_core_skills::model::SkillDependencies;
 use codex_core_skills::model::SkillInterface;
 use codex_core_skills::model::SkillMetadata;
+use codex_core_skills::model::SkillRouting;
 use codex_core_skills::model::SkillToolDependency;
 use codex_features::Feature;
 use codex_protocol::parse_command::ParsedCommand;
@@ -241,6 +242,9 @@ fn protocol_skill_to_core(skill: &ProtocolSkillMetadata) -> Option<SkillMetadata
                     .collect(),
             }),
         policy: None,
+        routing: skill.routing.clone().map(|routing| SkillRouting {
+            task_tags: routing.task_tags,
+        }),
         path_to_skills_md: skill.path.clone(),
         scope,
         plugin_id: None,

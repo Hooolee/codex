@@ -3351,6 +3351,9 @@ pub struct SkillMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub dependencies: Option<SkillDependencies>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub routing: Option<SkillRouting>,
     pub path: AbsolutePathBuf,
     pub scope: SkillScope,
     pub enabled: bool,
@@ -3375,6 +3378,11 @@ pub struct SkillInterface {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS, PartialEq, Eq)]
 pub struct SkillDependencies {
     pub tools: Vec<SkillToolDependency>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS, PartialEq, Eq)]
+pub struct SkillRouting {
+    pub task_tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS, PartialEq, Eq)]
@@ -3705,6 +3713,10 @@ pub struct CollabAgentSpawnBeginEvent {
     pub prompt: String,
     pub model: String,
     pub reasoning_effort: ReasoningEffortConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
@@ -3756,6 +3768,10 @@ pub struct CollabAgentSpawnEndEvent {
     pub model: String,
     /// Effective reasoning effort used by the spawned agent after inheritance and role overrides.
     pub reasoning_effort: ReasoningEffortConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
     /// Last known status of the new agent reported to the sender agent.
     pub status: AgentStatus,
 }

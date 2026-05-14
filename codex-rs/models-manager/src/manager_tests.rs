@@ -150,6 +150,10 @@ impl ModelsEndpointClient for TestModelsEndpoint {
         self.has_command_auth
     }
 
+    fn has_configured_endpoint(&self) -> bool {
+        false
+    }
+
     async fn uses_codex_backend(&self) -> bool {
         self.uses_codex_backend
     }
@@ -562,6 +566,10 @@ impl TestAuthAwareModelsEndpoint {
 #[async_trait]
 impl ModelsEndpointClient for TestAuthAwareModelsEndpoint {
     fn has_command_auth(&self) -> bool {
+        false
+    }
+
+    fn has_configured_endpoint(&self) -> bool {
         false
     }
 

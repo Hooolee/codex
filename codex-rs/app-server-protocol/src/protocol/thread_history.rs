@@ -2816,6 +2816,8 @@ mod tests {
                 prompt: "inspect the repo".into(),
                 model: "gpt-5.4-mini".into(),
                 reasoning_effort: codex_protocol::openai_models::ReasoningEffort::Medium,
+                route_reason: None,
+                fallback_reason: None,
                 status: AgentStatus::Running,
             }),
         ];

@@ -38,3 +38,24 @@ fn debug_models_default_prints_json_without_auth() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn debug_models_write_profile_creates_model_profiles_toml() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let mut cmd = codex_command(codex_home.path())?;
+    let output = cmd.args(["debug", "models", "--write-profile"]).output()?;
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    let written_path = stdout.trim();
+    assert_eq!(
+        std::fs::canonicalize(written_path)?,
+        std::fs::canonicalize(codex_home.path().join("model-profiles.toml"))?
+    );
+
+    let profile_contents = std::fs::read_to_string(codex_home.path().join("model-profiles.toml"))?;
+    let value: toml::Value = toml::from_str(&profile_contents)?;
+    assert!(value.get("models").is_some());
+
+    Ok(())
+}

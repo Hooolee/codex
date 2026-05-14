@@ -600,7 +600,7 @@ async fn skills_toggle_skips_instructions_for_parent_and_spawned_child() -> Resu
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn spawn_agent_role_overrides_requested_model_and_reasoning_settings() -> Result<()> {
+async fn spawn_agent_requested_model_and_reasoning_override_role_defaults() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -635,8 +635,11 @@ async fn spawn_agent_role_overrides_requested_model_and_reasoning_settings() -> 
     )
     .await?;
 
-    assert_eq!(child_snapshot.model, ROLE_MODEL);
-    assert_eq!(child_snapshot.reasoning_effort, Some(ROLE_REASONING_EFFORT));
+    assert_eq!(child_snapshot.model, REQUESTED_MODEL);
+    assert_eq!(
+        child_snapshot.reasoning_effort,
+        Some(REQUESTED_REASONING_EFFORT)
+    );
 
     Ok(())
 }

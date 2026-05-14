@@ -4,12 +4,30 @@ use crate::error::ApiError;
 use crate::provider::Provider;
 use codex_client::HttpTransport;
 use codex_client::RequestTelemetry;
+use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::ModelInfo;
+use codex_protocol::openai_models::ModelVisibility;
 use codex_protocol::openai_models::ModelsResponse;
+use codex_protocol::openai_models::TruncationPolicyConfig;
 use http::HeaderMap;
 use http::Method;
 use http::header::ETAG;
+use serde::Deserialize;
 use std::sync::Arc;
+
+/// OpenAI-compatible `/v1/models` list response (used as a fallback when the
+/// Codex-native format isn't returned by the provider).
+#[derive(Deserialize)]
+struct OpenAiModelList {
+    data: Vec<OpenAiModelEntry>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiModelEntry {
+    id: String,
+    #[allow(dead_code)]
+    owned_by: Option<String>,
+}
 
 pub struct ModelsClient<T: HttpTransport> {
     session: EndpointSession<T>,
@@ -61,13 +79,59 @@ impl<T: HttpTransport> ModelsClient<T> {
             .and_then(|value| value.to_str().ok())
             .map(ToString::to_string);
 
-        let ModelsResponse { models } = serde_json::from_slice::<ModelsResponse>(&resp.body)
-            .map_err(|e| {
-                ApiError::Stream(format!(
-                    "failed to decode models response: {e}; body: {}",
-                    String::from_utf8_lossy(&resp.body)
-                ))
-            })?;
+        // Try Codex-native format first; fall back to OpenAI `/v1/models` format.
+        let models = match serde_json::from_slice::<ModelsResponse>(&resp.body) {
+            Ok(ModelsResponse { models }) => models,
+            Err(_) => {
+                // OpenAI format: { data: [{ id: "...", owned_by: "..." }] }
+                let list: OpenAiModelList = serde_json::from_slice(&resp.body).map_err(|e| {
+                    ApiError::Stream(format!(
+                        "failed to decode models response: {e}; body: {}",
+                        String::from_utf8_lossy(&resp.body)
+                    ))
+                })?;
+                list.data
+                    .into_iter()
+                    .map(|entry| ModelInfo {
+                        slug: entry.id.clone(),
+                        display_name: entry.id,
+                        description: None,
+                        default_reasoning_level: None,
+                        supported_reasoning_levels: Vec::new(),
+                        shell_type: ConfigShellToolType::Default,
+                        visibility: ModelVisibility::List,
+                        supported_in_api: true,
+                        priority: 99,
+                        additional_speed_tiers: Vec::new(),
+                        service_tiers: Vec::new(),
+                        availability_nux: None,
+                        upgrade: None,
+                        base_instructions: String::new(),
+                        model_messages: None,
+                        supports_reasoning_summaries: false,
+                        default_reasoning_summary:
+                            codex_protocol::config_types::ReasoningSummary::Auto,
+                        support_verbosity: false,
+                        default_verbosity: None,
+                        apply_patch_tool_type: None,
+                        web_search_tool_type:
+                            codex_protocol::openai_models::WebSearchToolType::Text,
+                        truncation_policy: TruncationPolicyConfig::bytes(100_000),
+                        supports_parallel_tool_calls: false,
+                        supports_image_detail_original: false,
+                        context_window: None,
+                        max_context_window: None,
+                        auto_compact_token_limit: None,
+                        input_modalities:
+                            codex_protocol::openai_models::default_input_modalities(),
+                        experimental_supported_tools: Vec::new(),
+                        used_fallback_model_metadata: true,
+                        supports_search_tool: false,
+                        effective_context_window_percent: 95,
+                    })
+                    .collect()
+            }
+        };
 
         Ok((models, header_etag))
     }

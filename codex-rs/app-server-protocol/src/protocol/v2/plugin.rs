@@ -6,6 +6,7 @@ use super::HookTrustStatus;
 use codex_protocol::protocol::SkillDependencies as CoreSkillDependencies;
 use codex_protocol::protocol::SkillInterface as CoreSkillInterface;
 use codex_protocol::protocol::SkillMetadata as CoreSkillMetadata;
+use codex_protocol::protocol::SkillRouting as CoreSkillRouting;
 use codex_protocol::protocol::SkillScope as CoreSkillScope;
 use codex_protocol::protocol::SkillToolDependency as CoreSkillToolDependency;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -386,6 +387,9 @@ pub struct SkillMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub dependencies: Option<SkillDependencies>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub routing: Option<SkillRouting>,
     pub path: AbsolutePathBuf,
     pub scope: SkillScope,
     pub enabled: bool,
@@ -414,6 +418,13 @@ pub struct SkillInterface {
 #[ts(export_to = "v2/")]
 pub struct SkillDependencies {
     pub tools: Vec<SkillToolDependency>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct SkillRouting {
+    pub task_tags: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -739,6 +750,7 @@ impl From<CoreSkillMetadata> for SkillMetadata {
             short_description: value.short_description,
             interface: value.interface.map(SkillInterface::from),
             dependencies: value.dependencies.map(SkillDependencies::from),
+            routing: value.routing.map(SkillRouting::from),
             path: value.path,
             scope: value.scope.into(),
             enabled: true,
@@ -767,6 +779,14 @@ impl From<CoreSkillDependencies> for SkillDependencies {
                 .into_iter()
                 .map(SkillToolDependency::from)
                 .collect(),
+        }
+    }
+}
+
+impl From<CoreSkillRouting> for SkillRouting {
+    fn from(value: CoreSkillRouting) -> Self {
+        Self {
+            task_tags: value.task_tags,
         }
     }
 }

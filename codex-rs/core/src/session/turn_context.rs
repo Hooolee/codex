@@ -22,6 +22,10 @@ pub(super) fn image_generation_tool_auth_allowed(auth_manager: Option<&AuthManag
 pub(crate) struct TurnSkillsContext {
     pub(crate) outcome: Arc<SkillLoadOutcome>,
     pub(crate) implicit_invocation_seen_skills: Arc<Mutex<HashSet<String>>>,
+    /// Skills that were explicitly mentioned (via `/skill` or `@skill`) in the
+    /// user input that started this turn. Used by the subagent routing system to
+    /// select a model based on the active skill's routing tags.
+    pub(crate) mentioned_skill_paths: Arc<Mutex<Vec<AbsolutePathBuf>>>,
 }
 
 impl TurnSkillsContext {
@@ -29,6 +33,7 @@ impl TurnSkillsContext {
         Self {
             outcome,
             implicit_invocation_seen_skills: Arc::new(Mutex::new(HashSet::new())),
+            mentioned_skill_paths: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }

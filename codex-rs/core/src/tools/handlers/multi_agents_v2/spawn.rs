@@ -5,6 +5,7 @@ use crate::agent::control::render_input_preview;
 use crate::agent::next_thread_spawn_depth;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::apply_role_to_config;
+use crate::subagent_model_routing::SkillModelRouteDecision;
 use crate::tools::handlers::multi_agents_spec::SpawnAgentToolOptions;
 use crate::tools::handlers::multi_agents_spec::create_spawn_agent_tool_v2;
 use crate::turn_timing::now_unix_timestamp_ms;
@@ -64,6 +65,11 @@ async fn handle_spawn_agent(
 
     let initial_operation = parse_collab_input(Some(args.message), /*items*/ None)?;
     let prompt = render_input_preview(&initial_operation);
+    let skill_model_route = if args.model.is_none() {
+        resolve_spawn_agent_skill_model_route(&session, turn.as_ref(), &initial_operation).await
+    } else {
+        SkillModelRouteDecision::default()
+    };
 
     let session_source = turn.session_source.clone();
     let child_depth = next_thread_spawn_depth(&session_source);
@@ -75,28 +81,42 @@ async fn handle_spawn_agent(
                 started_at_ms: now_unix_timestamp_ms(),
                 sender_thread_id: session.conversation_id,
                 prompt: prompt.clone(),
-                model: args.model.clone().unwrap_or_default(),
+                model: args
+                    .model
+                    .clone()
+                    .or_else(|| skill_model_route.requested_model.clone())
+                    .unwrap_or_default(),
                 reasoning_effort: args.reasoning_effort.unwrap_or_default(),
+                route_reason: skill_model_route.route_reason.clone(),
+                fallback_reason: skill_model_route.fallback_reason.clone(),
             }
             .into(),
         )
         .await;
     let mut config =
         build_agent_spawn_config(&session.get_base_instructions().await, turn.as_ref())?;
+    // Apply skill-based model routing for ALL spawns including forks.
+    // The fork restriction below only blocks explicit user overrides.
+    apply_requested_spawn_agent_model_overrides(
+        &session,
+        &mut config,
+        skill_model_route.requested_model.as_deref(),
+        /*requested_reasoning_effort*/ None,
+    )
+    .await?;
     if matches!(fork_mode, Some(SpawnAgentForkMode::FullHistory)) {
         reject_full_fork_spawn_overrides(role_name, args.model.as_deref(), args.reasoning_effort)?;
     } else {
+        apply_role_to_config(&mut config, role_name)
+            .await
+            .map_err(FunctionCallError::RespondToModel)?;
         apply_requested_spawn_agent_model_overrides(
             &session,
-            turn.as_ref(),
             &mut config,
             args.model.as_deref(),
             args.reasoning_effort,
         )
         .await?;
-        apply_role_to_config(&mut config, role_name)
-            .await
-            .map_err(FunctionCallError::RespondToModel)?;
     }
     apply_spawn_agent_service_tier(
         &session,
@@ -202,6 +222,8 @@ async fn handle_spawn_agent(
                 prompt,
                 model: effective_model,
                 reasoning_effort: effective_reasoning_effort,
+                route_reason: skill_model_route.route_reason,
+                fallback_reason: skill_model_route.fallback_reason,
                 status,
             }
             .into(),

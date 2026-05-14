@@ -920,6 +920,7 @@ mod tests {
             interface: None,
             dependencies: None,
             policy: None,
+            routing: None,
             path_to_skills_md: test_path_buf(&format!("/tmp/{name}/SKILL.md")).abs(),
             scope,
             plugin_id: None,

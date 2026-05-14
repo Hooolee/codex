@@ -61,6 +61,8 @@ use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
+use codex_core::subagent_model_routing::build_suggested_model_profiles;
+use codex_core::subagent_model_routing::model_profiles_path;
 use codex_features::FEATURES;
 use codex_features::Stage;
 use codex_features::is_known_feature_key;
@@ -269,6 +271,10 @@ struct DebugModelsCommand {
     /// Skip refresh and dump only the bundled catalog shipped with this binary.
     #[arg(long = "bundled", default_value_t = false)]
     bundled: bool,
+
+    /// Generate or refresh the fork model profile TOML under CODEX_HOME.
+    #[arg(long = "write-profile", default_value_t = false)]
+    write_profile: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -1611,7 +1617,11 @@ async fn run_debug_models_command(
     cmd: DebugModelsCommand,
     root_config_overrides: CliConfigOverrides,
 ) -> anyhow::Result<()> {
-    let catalog = if cmd.bundled {
+    let DebugModelsCommand {
+        bundled,
+        write_profile,
+    } = cmd;
+    let catalog = if bundled {
         bundled_models_response()?
     } else {
         let cli_overrides = root_config_overrides
@@ -1628,6 +1638,35 @@ async fn run_debug_models_command(
             .raw_model_catalog(RefreshStrategy::OnlineIfUncached)
             .await
     };
+
+    if write_profile {
+        let cli_overrides = root_config_overrides
+            .parse_overrides()
+            .map_err(anyhow::Error::msg)?;
+        let config = ConfigBuilder::default()
+            .cli_overrides(cli_overrides)
+            .build()
+            .await?;
+        let available_models = build_models_manager(
+            &config,
+            AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ true).await,
+        )
+        .list_models(RefreshStrategy::OnlineIfUncached)
+        .await;
+        let generated_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|duration| duration.as_secs().to_string());
+        let profiles = build_suggested_model_profiles(&available_models, generated_at);
+        let contents = toml::to_string_pretty(&profiles)?;
+        let output_path = model_profiles_path(&config.codex_home);
+        if let Some(parent) = output_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::write(output_path.as_path(), contents).await?;
+        println!("{}", output_path.display());
+        return Ok(());
+    }
 
     serde_json::to_writer(std::io::stdout(), &catalog)?;
     println!();

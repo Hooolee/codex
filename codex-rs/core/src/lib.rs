@@ -99,6 +99,7 @@ pub(crate) use skills::maybe_emit_implicit_skill_invocation;
 pub(crate) use skills::resolve_skill_dependencies_for_turn;
 pub(crate) use skills::skills_load_input_from_config;
 mod stream_events_utils;
+pub mod subagent_model_routing;
 pub mod test_support;
 mod unified_exec;
 pub mod windows_sandbox;

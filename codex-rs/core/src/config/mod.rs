@@ -489,7 +489,7 @@ pub struct Config {
     /// appends one extra argument containing a JSON payload describing the
     /// event.
     ///
-    /// Example `~/.codex/config.toml` snippet:
+    /// Example `~/.codex-fork/config.toml` snippet:
     ///
     /// ```toml
     /// notify = ["notify-send", "Codex"]
@@ -634,7 +634,7 @@ pub struct Config {
     /// Memories subsystem settings.
     pub memories: MemoriesConfig,
 
-    /// Directory containing all Codex state (defaults to `~/.codex` but can be
+    /// Directory containing all Codex state (defaults to `~/.codex-fork` but can be
     /// overridden by the `CODEX_HOME` environment variable).
     pub codex_home: AbsolutePathBuf,
 
@@ -658,7 +658,7 @@ pub struct Config {
     /// Effective config lock used for strict replay validation.
     pub config_lock_toml: Option<Arc<ConfigLockfileToml>>,
 
-    /// Settings that govern if and what will be written to `~/.codex/history.jsonl`.
+    /// Settings that govern if and what will be written to `~/.codex-fork/history.jsonl`.
     pub history: History,
 
     /// When true, session is not persisted on disk. Default to `false`
@@ -3409,7 +3409,7 @@ fn toml_uses_deprecated_instructions_file(value: &TomlValue) -> bool {
 
 /// Returns the path to the Codex configuration directory, which can be
 /// specified by the `CODEX_HOME` environment variable. If not set, defaults to
-/// `~/.codex`.
+/// `~/.codex-fork`.
 ///
 /// - If `CODEX_HOME` is set, the value must exist and be a directory. The
 ///   value will be canonicalized and this function will Err otherwise.

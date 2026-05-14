@@ -5,6 +5,11 @@ use crate::config::HARD_MAX_MULTI_AGENT_V2_TIMEOUT_MS;
 use crate::function_tool::FunctionCallError;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
+use crate::skills::SkillMetadata;
+use crate::skills::collect_explicit_skill_mentions;
+use crate::subagent_model_routing::SkillModelRouteDecision;
+use crate::subagent_model_routing::load_model_profiles;
+use crate::subagent_model_routing::resolve_skill_routed_model;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -195,6 +200,120 @@ pub(crate) fn parse_collab_input(
     }
 }
 
+pub(crate) async fn resolve_spawn_agent_skill_model_route(
+    session: &Session,
+    turn: &TurnContext,
+    initial_operation: &Op,
+) -> SkillModelRouteDecision {
+    let mentioned_skills =
+        collect_mentioned_skills_for_spawn(turn, initial_operation).await;
+    if mentioned_skills.is_empty() {
+        return SkillModelRouteDecision::default();
+    }
+
+    let profiles = match load_model_profiles(&turn.config.codex_home).await {
+        Ok(Some(profiles)) => profiles,
+        Ok(None) => {
+            return SkillModelRouteDecision {
+                requested_model: None,
+                route_reason: None,
+                fallback_reason: Some("model profiles file not found".to_string()),
+            };
+        }
+        Err(err) => {
+            return SkillModelRouteDecision {
+                requested_model: None,
+                route_reason: None,
+                fallback_reason: Some(err),
+            };
+        }
+    };
+
+    let available_models = session
+        .services
+        .models_manager
+        .list_models(RefreshStrategy::Offline)
+        .await;
+    let decision = resolve_skill_routed_model(&mentioned_skills, &available_models, &profiles);
+    // Diagnostics: write routing decision to known file.
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/codex-subagent-route.log")
+    {
+        use std::io::Write;
+        let avail: Vec<&str> = available_models.iter().map(|m| m.model.as_str()).collect();
+        let _ = writeln!(
+            f,
+            "[DECISION] requested_model={:?} route_reason={:?} fallback_reason={:?} available=[{}]",
+            decision.requested_model,
+            decision.route_reason,
+            decision.fallback_reason,
+            avail.join(", ")
+        );
+    }
+    decision
+}
+
+/// Collects skills relevant for subagent model routing.
+///
+/// First checks whether the spawn_agent input explicitly mentions any skills.
+/// If not, falls back to skills that were explicitly mentioned at the turn
+/// level (e.g. via `/skill` or `@skill` in the user's message).  This way a
+/// skill whose `default_prompt` instructs the model to use `spawn_agent` will
+/// still have its routing tags considered even though the spawn input text
+/// doesn't repeat the skill name.
+async fn collect_mentioned_skills_for_spawn(
+    turn: &TurnContext,
+    initial_operation: &Op,
+) -> Vec<SkillMetadata> {
+    // 1. Check the spawn_agent input for inline skill mentions.
+    if let Op::UserInput { items, .. } = initial_operation {
+        let from_input = collect_explicit_skill_mentions(
+            items,
+            &turn.turn_skills.outcome.skills,
+            &turn.turn_skills.outcome.disabled_paths,
+            &HashMap::new(),
+        );
+        if !from_input.is_empty() {
+            return from_input;
+        }
+    }
+
+    // 2. Fall back to turn-level mentioned skills (e.g. user invoked `/skill`).
+    let turn_paths = turn
+        .turn_skills
+        .mentioned_skill_paths
+        .lock()
+        .await
+        .clone();
+    // Diagnostics: write spawn-agent route state to a known file.
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/codex-subagent-route.log")
+    {
+        use std::io::Write;
+        let _ = writeln!(
+            f,
+            "[SPAWN] turn_paths={:?} total_skills={}",
+            turn_paths,
+            turn.turn_skills.outcome.skills.len()
+        );
+    }
+    if turn_paths.is_empty() {
+        return Vec::new();
+    }
+    turn
+        .turn_skills
+        .outcome
+        .skills
+        .iter()
+        .filter(|skill| turn_paths.contains(&skill.path_to_skills_md))
+        .cloned()
+        .collect()
+}
+
 /// Builds the base config snapshot for a newly spawned sub-agent.
 ///
 /// The returned config starts from the parent's effective config and then refreshes the
@@ -289,7 +408,6 @@ pub(crate) fn apply_spawn_agent_overrides(config: &mut Config, child_depth: i32)
 
 pub(crate) async fn apply_requested_spawn_agent_model_overrides(
     session: &Session,
-    turn: &TurnContext,
     config: &mut Config,
     requested_model: Option<&str>,
     requested_reasoning_effort: Option<ReasoningEffort>,
@@ -327,9 +445,20 @@ pub(crate) async fn apply_requested_spawn_agent_model_overrides(
     }
 
     if let Some(reasoning_effort) = requested_reasoning_effort {
+        let model = config.model.clone().ok_or_else(|| {
+            FunctionCallError::RespondToModel(
+                "spawn_agent could not resolve the child model for reasoning validation"
+                    .to_string(),
+            )
+        })?;
+        let model_info = session
+            .services
+            .models_manager
+            .get_model_info(model.as_str(), &config.to_models_manager_config())
+            .await;
         validate_spawn_agent_reasoning_effort(
-            &turn.model_info.slug,
-            &turn.model_info.supported_reasoning_levels,
+            model.as_str(),
+            &model_info.supported_reasoning_levels,
             reasoning_effort,
         )?;
         config.model_reasoning_effort = Some(reasoning_effort);
@@ -387,20 +516,40 @@ fn find_spawn_agent_model_name(
     available_models: &[codex_protocol::openai_models::ModelPreset],
     requested_model: &str,
 ) -> Result<String, FunctionCallError> {
-    available_models
+    // 1. Exact match first.
+    if let Some(found) = available_models.iter().find(|m| m.model == requested_model) {
+        return Ok(found.model.clone());
+    }
+
+    // 2. If requested has namespace prefix (e.g. "cx/gpt-5.4"), try matching the suffix
+    //    against non-namespaced entries (e.g. "gpt-5.4").
+    if let Some((_namespace, suffix)) = requested_model.split_once('/') {
+        if let Some(found) = available_models.iter().find(|m| m.model == suffix) {
+            return Ok(found.model.clone());
+        }
+    }
+
+    // 3. If requested has no namespace, try matching against any namespaced entry whose
+    //    suffix matches (e.g. "cx/gpt-5.4" matches "gpt-5.4").
+    if !requested_model.contains('/') {
+        let suffix_pattern = format!("/{requested_model}");
+        if let Some(found) = available_models
+            .iter()
+            .find(|m| m.model.ends_with(&suffix_pattern))
+        {
+            return Ok(found.model.clone());
+        }
+    }
+
+    // 4. All attempts failed — build a helpful error listing available models.
+    let available = available_models
         .iter()
-        .find(|model| model.model == requested_model)
-        .map(|model| model.model.clone())
-        .ok_or_else(|| {
-            let available = available_models
-                .iter()
-                .map(|model| model.model.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            FunctionCallError::RespondToModel(format!(
-                "Unknown model `{requested_model}` for spawn_agent. Available models: {available}"
-            ))
-        })
+        .map(|model| model.model.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(FunctionCallError::RespondToModel(format!(
+        "Unknown model `{requested_model}` for spawn_agent. Available models: {available}"
+    )))
 }
 
 fn validate_spawn_agent_reasoning_effort(

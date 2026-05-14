@@ -71,6 +71,10 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
         self.provider_info.has_command_auth()
     }
 
+    fn has_configured_endpoint(&self) -> bool {
+        self.provider_info.base_url.is_some()
+    }
+
     async fn uses_codex_backend(&self) -> bool {
         self.auth()
             .await

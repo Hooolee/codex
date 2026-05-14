@@ -15,6 +15,7 @@ use crate::tools::handlers::multi_agents_v2::SendMessageHandler as SendMessageHa
 use crate::tools::handlers::multi_agents_v2::SpawnAgentHandler as SpawnAgentHandlerV2;
 use crate::tools::handlers::multi_agents_v2::WaitAgentHandler as WaitAgentHandlerV2;
 use crate::turn_diff_tracker::TurnDiffTracker;
+use codex_exec_server::LOCAL_FS;
 use codex_extension_api::empty_extension_registry;
 use codex_features::Feature;
 use codex_login::AuthManager;
@@ -894,6 +895,96 @@ async fn spawn_agent_returns_agent_id_without_task_name() {
     assert!(result.get("task_name").is_none());
     assert!(result.get("nickname").is_some());
     assert_eq!(success, Some(true));
+}
+
+#[tokio::test]
+async fn spawn_agent_routes_skill_tagged_subagent_to_profile_model() {
+    #[derive(Debug, Deserialize)]
+    struct SpawnAgentResult {
+        agent_id: String,
+    }
+
+    let (mut session, mut turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.conversation_id = root.thread_id;
+
+    tokio::fs::create_dir_all(turn.config.codex_home.join("skills/demo/agents"))
+        .await
+        .expect("skill metadata dir should be created");
+    let skill_path = turn.config.codex_home.join("skills/demo/SKILL.md");
+    tokio::fs::write(
+        &skill_path,
+        "---\nname: demo-skill\ndescription: demo description\n---\n\n# Demo\n",
+    )
+    .await
+    .expect("skill doc should be written");
+    tokio::fs::write(
+        turn.config
+            .codex_home
+            .join("skills/demo/agents/openai.yaml"),
+        "routing:\n  task_tags:\n    - research\n    - deep-reasoning\n",
+    )
+    .await
+    .expect("skill metadata should be written");
+    tokio::fs::write(
+        turn.config.codex_home.join("model-profiles.toml"),
+        r#"
+version = 1
+
+[[models]]
+model = "gpt-5.5"
+task_tags = ["research", "deep-reasoning"]
+"#,
+    )
+    .await
+    .expect("model profiles should be written");
+
+    let outcome = session
+        .services
+        .skills_manager
+        .skills_for_cwd(
+            &crate::skills_load_input_from_config(&turn.config, Vec::new()),
+            /*force_reload*/ true,
+            Some(Arc::clone(&LOCAL_FS)),
+        )
+        .await;
+    turn.turn_skills = crate::session::turn_context::TurnSkillsContext::new(Arc::new(outcome));
+
+    let session = Arc::new(session);
+    let output = SpawnAgentHandler::default()
+        .handle(invocation(
+            Arc::clone(&session),
+            Arc::new(turn),
+            "spawn_agent",
+            function_payload(json!({
+                "items": [{
+                    "type": "skill",
+                    "name": "demo-skill",
+                    "path": skill_path
+                }]
+            })),
+        ))
+        .await
+        .expect("spawn_agent should succeed");
+
+    let (content, success) = expect_text_output(output);
+    assert_eq!(success, Some(true));
+    let result: SpawnAgentResult =
+        serde_json::from_str(&content).expect("spawn_agent result should be json");
+    let agent_id = parse_agent_id(&result.agent_id);
+    let snapshot = session
+        .services
+        .agent_control
+        .get_agent_config_snapshot(agent_id)
+        .await
+        .expect("spawned agent snapshot should exist");
+
+    assert_eq!(snapshot.model, "gpt-5.5");
 }
 
 #[tokio::test]

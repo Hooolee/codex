@@ -50,6 +50,11 @@ fn skills_to_info(
                             .collect(),
                     }
                 }),
+                routing: skill.routing.clone().map(|routing| {
+                    codex_app_server_protocol::SkillRouting {
+                        task_tags: routing.task_tags,
+                    }
+                }),
                 path: skill.path_to_skills_md.clone(),
                 scope: skill.scope.into(),
                 enabled,
